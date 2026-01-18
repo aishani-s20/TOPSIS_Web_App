@@ -4,22 +4,18 @@ import numpy as np
 import smtplib
 import re
 import os
-from dotenv import load_dotenv  # <--- Import this
+from dotenv import load_dotenv
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+from sklearn.preprocessing import LabelEncoder
 
 # --- Configuration ---
-load_dotenv()  # <--- This loads the variables from .env
+load_dotenv()
 
-# Now we read the secrets using os.getenv
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
-
-if not SENDER_EMAIL or not SENDER_PASSWORD:
-    st.error("Error: Email credentials not found. Please check your .env file.")
-    st.stop()
 
 # --- Helper Functions ---
 
@@ -28,6 +24,9 @@ def validate_email(email):
     return re.match(pattern, email)
 
 def send_email(receiver_email, result_df, filename="result.csv"):
+    if not SENDER_EMAIL or not SENDER_PASSWORD:
+        return False, "Server Error: Email credentials are not configured."
+        
     try:
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
@@ -47,9 +46,8 @@ def send_email(receiver_email, result_df, filename="result.csv"):
         part.add_header('Content-Disposition', f"attachment; filename= {filename}")
         msg.attach(part)
 
-        # SMTP Server Setup (For Gmail)
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
+        # SMTP Server Setup (Using SSL Port 465 for Hugging Face compatibility)
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         text = msg.as_string()
         server.sendmail(SENDER_EMAIL, receiver_email, text)
@@ -58,47 +56,53 @@ def send_email(receiver_email, result_df, filename="result.csv"):
     except Exception as e:
         return False, str(e)
 
-def calculate_topsis(df, weights, impacts):
-    # This logic is adapted from your CLI package
+def calculate_topsis(data_matrix, weights, impacts):
+    """
+    Performs the TOPSIS calculation on the numeric data matrix.
+    """
     try:
-        # Preprocessing: Drop first column (Object Names) and convert to float
-        data = df.iloc[:, 1:].values.astype(float)
+        # Step 1: Vector Normalization
+        rss = np.sqrt(np.sum(data_matrix**2, axis=0))
         
-        # Normalization
-        rss = np.sqrt(np.sum(data**2, axis=0))
-        normalized_data = data / rss
+        # Handle division by zero
+        if (rss == 0).any():
+            return None, "Error: One of the columns contains all zeros, cannot normalize."
+            
+        normalized_matrix = data_matrix / rss
 
-        # Weighting
-        weighted_data = normalized_data * weights
+        # Step 2: Weight Assignment
+        weighted_matrix = normalized_matrix * weights
 
-        # Ideal Best and Worst
+        # Step 3: Find Ideal Best and Ideal Worst
         ideal_best = []
         ideal_worst = []
 
         for i in range(len(impacts)):
             if impacts[i] == '+':
-                ideal_best.append(np.max(weighted_data[:, i]))
-                ideal_worst.append(np.min(weighted_data[:, i]))
-            else:
-                ideal_best.append(np.min(weighted_data[:, i]))
-                ideal_worst.append(np.max(weighted_data[:, i]))
+                ideal_best.append(np.max(weighted_matrix[:, i]))
+                ideal_worst.append(np.min(weighted_matrix[:, i]))
+            else: # Impact is '-'
+                ideal_best.append(np.min(weighted_matrix[:, i]))
+                ideal_worst.append(np.max(weighted_matrix[:, i]))
 
-        # Euclidean Distance
-        s_best = np.sqrt(np.sum((weighted_data - ideal_best)**2, axis=1))
-        s_worst = np.sqrt(np.sum((weighted_data - ideal_worst)**2, axis=1))
+        ideal_best = np.array(ideal_best)
+        ideal_worst = np.array(ideal_worst)
 
-        # Topsis Score
-        topsis_score = s_worst / (s_best + s_worst)
+        # Step 4: Calculate Euclidean Distance
+        s_best = np.sqrt(np.sum((weighted_matrix - ideal_best)**2, axis=1))
+        s_worst = np.sqrt(np.sum((weighted_matrix - ideal_worst)**2, axis=1))
+
+        # Step 5: Topsis Score
+        denom = s_best + s_worst
         
-        # Add to DF
-        df['Topsis Score'] = topsis_score
-        df['Rank'] = df['Topsis Score'].rank(ascending=False).astype(int)
+        # Safe division
+        topsis_score = np.divide(s_worst, denom, out=np.zeros_like(s_worst), where=denom!=0)
+        topsis_score = np.round(topsis_score, 5)
         
-        return df
+        return topsis_score, None
 
     except Exception as e:
-        st.error(f"Error in calculation: {e}")
-        return None
+        return None, str(e)
 
 # --- Main App UI ---
 
@@ -113,49 +117,98 @@ impacts_input = st.text_input("Impacts (comma-separated, + or -)", placeholder="
 
 # 2. Submit Button
 if st.button("Submit"):
-    # --- Validations ---
+    # --- Basic Checks ---
     if not uploaded_file:
         st.error("Please upload a CSV file.")
-    elif not email_id or not validate_email(email_id):
+        st.stop()
+    if not email_id or not validate_email(email_id):
         st.error("Please enter a valid email address.")
-    elif not weights_input:
+        st.stop()
+    if not weights_input:
         st.error("Please enter weights.")
-    elif not impacts_input:
+        st.stop()
+    if not impacts_input:
         st.error("Please enter impacts.")
-    else:
-        # Process Inputs
-        try:
-            df = pd.read_csv(uploaded_file)
-            
-            # Parse Weights
-            weights = [float(w) for w in weights_input.split(',')]
-            
-            # Parse Impacts
-            impacts = impacts_input.split(',')
-            
-            # Validation: Column Count
-            num_cols = df.shape[1] - 1  # Exclude first column
-            if len(weights) != num_cols or len(impacts) != num_cols:
-                st.error(f"Count Mismatch! Input file has {num_cols} numerical columns, but you provided {len(weights)} weights and {len(impacts)} impacts.")
-            elif not all(i in ['+', '-'] for i in impacts):
-                st.error("Impacts must be either '+' or '-'.")
-            else:
-                # --- Run Logic ---
-                st.info("Calculating TOPSIS Score...")
-                result_df = calculate_topsis(df, weights, impacts)
-                
-                if result_df is not None:
-                    # --- Send Email ---
-                    st.info(f"Sending result to {email_id}...")
-                    success, message = send_email(email_id, result_df)
-                    
-                    if success:
-                        st.success("Success! Result file has been sent to your email.")
-                        st.dataframe(result_df) # Show preview
-                    else:
-                        st.error(f"Failed to send email: {message}")
+        st.stop()
 
+    try:
+        # Load Data
+        df = pd.read_csv(uploaded_file)
+        
+        # --- Validation 1: Column Count ---
+        if df.shape[1] < 3:
+            st.error("Error: Input file must contain three or more columns.")
+            st.stop()
+
+        # --- Validation 2: Parse Weights ---
+        try:
+            final_weights = [float(w) for w in weights_input.split(',')]
         except ValueError:
-            st.error("Weights must be numeric values separated by commas.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+            st.error("Error: Weights should be comma-separated numeric values (e.g., '1,2,3').")
+            st.stop()
+
+        # --- Validation 3: Parse Impacts ---
+        final_impacts = impacts_input.split(',')
+        if not all(i in ['+', '-'] for i in final_impacts):
+            st.error("Error: Impacts should be either '+' or '-' separated by commas (e.g., '+,-,+').")
+            st.stop()
+
+        # --- Validation 4: Preprocessing & Encoding ---
+        # Iterate from the 2nd column (index 1) to the last
+        encoding_log = []
+        for col in df.columns[1:]:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                try:
+                    le = LabelEncoder()
+                    df[col] = le.fit_transform(df[col])
+                    
+                    # Store mapping for user info
+                    mapping = dict(zip(le.classes_, le.transform(le.classes_)))
+                    encoding_log.append(f"Encoded '{col}': {mapping}")
+                    
+                except Exception as e:
+                    st.error(f"Error: Could not encode '{col}' column. {e}")
+                    st.stop()
+
+        # Show encoding info if any changes happened
+        if encoding_log:
+            with st.expander("Categorical Values Encoded"):
+                for log in encoding_log:
+                    st.write(log)
+
+        # Create Data Matrix
+        data_matrix = df.iloc[:, 1:].values.astype(float)
+        columns = data_matrix.shape[1]
+
+        # --- Validation 5: Length Mismatch ---
+        if len(final_weights) != columns:
+            st.error(f"Error: Number of weights ({len(final_weights)}) is not equal to number of columns ({columns}).")
+            st.stop()
+        
+        if len(final_impacts) != columns:
+            st.error(f"Error: Number of impacts ({len(final_impacts)}) is not equal to number of columns ({columns}).")
+            st.stop()
+
+        # --- Run Calculation ---
+        st.info("Calculating TOPSIS Score...")
+        topsis_score, error_msg = calculate_topsis(data_matrix, final_weights, final_impacts)
+
+        if error_msg:
+            st.error(error_msg)
+        else:
+            # Add results to dataframe
+            df['Topsis Score'] = topsis_score
+            df['Rank'] = df['Topsis Score'].rank(ascending=False).astype(int)
+
+            # --- Send Email ---
+            st.info(f"Sending result to {email_id}...")
+            success, message = send_email(email_id, df)
+            
+            if success:
+                st.success("Success! Result file has been sent to your email.")
+                st.dataframe(df) # Show preview
+            else:
+                st.error(f"Failed to send email: {message}")
+
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {e}")
