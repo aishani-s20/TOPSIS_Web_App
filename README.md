@@ -6,6 +6,23 @@ A web-based implementation of the TOPSIS (Technique for Order Preference by Simi
 
 ---
 
+## 📘 What is TOPSIS?
+
+**TOPSIS (Technique for Order Preference by Similarity to Ideal Solution)** is a multi-criteria decision-making (MCDM) method used to rank alternatives based on their relative closeness to an ideal solution.
+
+### 🔹 Key Idea
+The best alternative should:
+- Have the **shortest distance from the ideal solution**
+- Have the **farthest distance from the negative-ideal solution**
+
+TOPSIS is widely used in:
+- Engineering decision-making  
+- Business and management analysis  
+- Data science and analytics  
+- Research and academic projects  
+
+---
+
 ## 🚀 Features
 
 - Upload input data file (CSV format)
