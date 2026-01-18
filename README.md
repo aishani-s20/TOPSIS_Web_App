@@ -88,7 +88,7 @@ Comma-separated values (`+` or `-`)
 
 ## ▶️ How to Run Locally
 ```bash
-git clone https://github.com/your-username/topsis-web-service.git
+git clone https://github.com/aishani-s20/TOPSIS_Web_App.git
 cd topsis-web-service
 pip install -r requirements.txt
 streamlit run app.py
@@ -110,16 +110,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👤 Author
 
-**Your Name**  
-- GitHub: [@your-username](https://github.com/your-username)
-- Email: your.email@example.com
-
----
-
-## 🤝 Contributing
-
-Contributions, issues, and feature requests are welcome!  
-Feel free to check the [issues page](https://github.com/your-username/topsis-web-service/issues).
+**Aishani Shreya**  
+- GitHub: [@aishani-s20](https://github.com/aishani-s20)
+- Email: aishani1020@gmail.com
 
 ---
 
